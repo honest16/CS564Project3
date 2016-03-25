@@ -36,6 +36,22 @@ BufMgr::BufMgr(std::uint32_t bufs)
 
 
 BufMgr::~BufMgr() {
+  
+  //Flushing out all dirty pages
+  for (FrameId i = 0; i < numBufs; i++) 
+  { 
+  	if (bufDescTable[i].dirty) {
+			bufDescTable[clockHand].file->writePage(bufPool[clockHand]);
+			bufDescTable[clockHand].dirty = false;
+  	}
+  }
+
+  //Deallocating the buffer pool
+  delete[] bufPool;
+ 
+  //Deallocating the BufDesc table
+  delete[] bufDescTable;
+  
 }
 
 void BufMgr::advanceClock()
@@ -138,6 +154,41 @@ void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty)
 
 void BufMgr::flushFile(const File* file) 
 {
+ //Scanning bufTable for pages belonging to the file 
+ for (FrameId i = 0; i < numBufs; i++) 
+  { 
+    //For each page encountered:
+  	if (bufDescTable[i].file == file) {
+			
+			try{
+				try {
+					// If the page is dirty, 
+					if(bufDescTable[i].dirty){
+						//call file->writePage() to flush the page to disk and then set the dirty bit for the page to false
+						bufDescTable[i].file->writePage(bufPool[i]);
+						bufDescTable[i].dirty = false;
+					}
+					// Remove the page from the hashtable (whether the page is clean or dirty)
+					hashTable->remove(file, bufDescTable[i].pageNo);
+
+					//update the metadata
+					bufDescTable[i].valid = false;
+		  
+					// Invoke the Clear() method of BufDesc for the page frame
+					bufDescTable[i].Clear();
+				} catch (PagePinnedException e) {
+					//what to do here!? PANIC!!
+				}
+			} catch (BadBufferException e1) {
+				//what to do here!? PANIC!!
+			}
+			
+  	}
+  }
+ 
+ 
+
+ //Throws BadBuffer-Exception if an invalid page belonging to the file is encountered.
 }
 
 void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page) 
