@@ -15,7 +15,11 @@
 #include "exceptions/hash_not_found_exception.h"
 
 namespace badgerdb { 
-
+/*
+ * Constructs a buffer of size bufs. 
+ * Initializes metadata information in bufDescTable.
+ * Creates the buffer hash table.
+ */
 BufMgr::BufMgr(std::uint32_t bufs) 
 	: numBufs(bufs) {
 	bufDescTable = new BufDesc[bufs];
@@ -33,7 +37,11 @@ BufMgr::BufMgr(std::uint32_t bufs)
 
   clockHand = bufs - 1;
 }
-	
+
+/*
+ * Destructor for the BufMgr class.
+ * Flushes out all valid dirty pages before deleting buffer pool 
+ */	
 BufMgr::~BufMgr() {
   
   //Flushing out all valid, dirty pages
@@ -51,13 +59,20 @@ BufMgr::~BufMgr() {
   delete [] bufDescTable;
 }
 
-
+/*
+ * Advances the clockhand one space in the buffer pool ahead (with wrap-around).
+ * Used in the allocBuf to find a valid frame.
+ */
 void BufMgr::advanceClock()
 {
 	// clockHand is a pointer into the bufPool and bufDescTable and both of these should be changed
 	clockHand = (clockHand + 1) % numBufs;
 }
 
+/*
+ * Finds a free frame in the buffer pool using the clock algorithm.
+ * Returns the result by reference in frame variable
+ */
 void BufMgr::allocBuf(FrameId& frame) 
 {
 	//implement the clock algorithm here
@@ -99,7 +114,9 @@ void BufMgr::allocBuf(FrameId& frame)
 	frame = clockHand;
 }
 
-	
+/*
+ * Get page pageNo from file and return the result in page variable by reference
+ */	
 void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 {
 	FrameId frameNo;
@@ -113,7 +130,7 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 		//this page was just referenced and someone is using it so increase the count
 		bufDescTable[frameNo].refbit = true;
 		bufDescTable[frameNo].pinCnt++;
-	} catch(const HashNotFoundException& e) {
+	} catch(HashNotFoundException& e) {
 		try {
 			allocBuf(frameNo);
 			Page tempPage = file->readPage(pageNo);
@@ -130,36 +147,50 @@ void BufMgr::readPage(File* file, const PageId pageNo, Page*& page)
 	}
 }
 
-
+/*
+ * Decrease the pin count for the specified page in the specified file.
+ * If the page is dirty then we need to write that page to disk.
+ */
 void BufMgr::unPinPage(File* file, const PageId pageNo, const bool dirty) 
 {
 	FrameId frameNo;
 	try {
+		//try to lookup the page in the hashtable
 		hashTable->lookup(file, pageNo, frameNo);
+		
+		//cant unpin a page that isnt pinned
 		if(bufDescTable[frameNo].pinCnt == 0) {
 			throw PageNotPinnedException(file->filename(), pageNo, frameNo);
 		}
 		else {
+			//else decrease the count and update the dirty bit if that page was dirty
 			bufDescTable[frameNo].pinCnt--;
 			if(dirty) {
 				bufDescTable[frameNo].dirty = true;
 			}
 		}
+	//if the page isnt there we dont need to worry about unpinning it
 	} catch(HashNotFoundException& e) {
 		//what to do here!? PANIC!!
 	}
 }
 
+/*
+ * Flush out all pages belonging to specified file.
+ */
 void BufMgr::flushFile(const File* file) 
 {
 	for(FrameId i = 0; i < numBufs; i++) {
 		//only looking for pages that belong to the file
 		if(bufDescTable[i].file == file) {
 			//throw exceptions
+			
+			//we dont want to write invalid data
 			if(!bufDescTable[i].valid) {
 				throw BadBufferException(bufDescTable[i].frameNo, bufDescTable[i].dirty, bufDescTable[i].valid, bufDescTable[i].refbit);
 				continue;
 			}
+			//and we dont want to write pages that still pinned
 			if(bufDescTable[i].pinCnt > 0) {
 				throw PagePinnedException(file->filename(), bufDescTable[i].pageNo, bufDescTable[i].frameNo);
 				continue;
@@ -174,12 +205,16 @@ void BufMgr::flushFile(const File* file)
 			//remove the page from the hashtable
 			hashTable->remove(file, bufDescTable[i].pageNo);
 			
-			//clear the information
+			//clear the metedata 
 			bufDescTable[i].Clear();
 		}	
 	}
 }
 
+/*
+ * Looks for a frame in which to allocate a page for the specified file. 
+ * Returns by reference the page number and pointer to the actual page in the buffer pool
+ */
 void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page) 
 {
 	FrameId frameNo;
@@ -202,9 +237,16 @@ void BufMgr::allocPage(File* file, PageId &pageNo, Page*& page)
 	page = &bufPool[frameNo]; 
 }
 
+/*
+ * Gets rid of the specified page according to the page number from the specified file
+ */
 void BufMgr::disposePage(File* file, const PageId pageNo)
 {
 	FrameId frameNo;
+	
+	//delete the page from the file
+	file->deletePage(pageNo);
+	
 	try {
 		//remove the page from the hashTable if it exists
 		hashTable->lookup(file, pageNo, frameNo);
@@ -212,13 +254,10 @@ void BufMgr::disposePage(File* file, const PageId pageNo)
 
 		//update the metadata
 		bufDescTable[frameNo].Clear();
-
-		//delete the page from the file
-		file->deletePage(pageNo);
 	} catch(HashNotFoundException& e) {
 		//what to do here!? PANIC!!
-		std::cout << "PANIC IN disposePage. HashNotFoundException thrown\n";
-	}
+		
+	} 
 }
 
 void BufMgr::printSelf(void) 
